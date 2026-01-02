@@ -221,236 +221,99 @@
         }
     </style>
     <script>
-        const STREAM_SPEED = 100;
+const STREAM_SPEED = 100;
+let uploadedImageBase64 = null;
+let uploadedImageType = null;
 
-        let uploadedImageBase64 = null;
-        let uploadedImageType = null;
+// CHANGE THIS TO YOUR NEW BACKEND URL
+const BACKEND_URL = "https://bruno-ai1-backend.vercel.app";
 
-        let conversationHistory = [
-            { role: "system", content: "You are a helpful, witty AI assistant. Be concise but thorough." }
-        ];
+let conversationHistory = [
+    { role: "system", content: "You are a helpful, witty AI assistant. Be concise but thorough." }
+];
 
-        const dropArea = document.getElementById('drop-area');
-        const inputBox = document.getElementById('input-box');
+const dropArea = document.getElementById('drop-area');
+const inputBox = document.getElementById('input-box');
 
-        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-            dropArea.addEventListener(eventName, preventDefaults, false);
+// ... [Keep your Drag & Drop event listeners here] ...
+
+async function chat(promptOverride) {
+    const aiBubble = appendMsg("", 'ai');
+    let fullText = "";
+
+    try {
+        // POINTING TO NEW BACKEND
+        const response = await fetch(`${BACKEND_URL}/api/chat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                messages: conversationHistory,
+                promptOverride
+            })
         });
 
-        function preventDefaults(e) {
-            e.preventDefault();
-            e.stopPropagation();
-        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
 
-        dropArea.addEventListener('dragenter', () => inputBox.classList.add('highlight'));
-        dropArea.addEventListener('dragover', () => inputBox.classList.add('highlight'));
-        dropArea.addEventListener('dragleave', () => inputBox.classList.remove('highlight'));
-        dropArea.addEventListener('drop', handleDrop);
-
-        function handleDrop(e) {
-            inputBox.classList.remove('highlight');
-            handleFiles(e.dataTransfer.files);
-        }
-
-        function handleFiles(files) {
-            if (files.length === 0) return;
-            const file = files[0];
-            if (!file.type.startsWith('image/')) {
-                appendMsg("⚠️ Please upload an image file.", 'ai');
-                return;
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+                fullText = fullText.trim();
+                aiBubble.innerHTML = `<div class="message-content">${fullText.replace(/\n/g, '<br>')}</div>`;
+                addAlignmentToolbar(aiBubble);
+                conversationHistory.push({ role: "assistant", content: fullText });
+                break;
             }
-            const reader = new FileReader();
-            reader.onload = function(event) {
-                document.getElementById('preview-img').src = event.target.result;
-                uploadedImageBase64 = event.target.result.split(',')[1];
-                uploadedImageType = file.type;
-                document.getElementById('preview-bar').style.display = 'flex';
-            };
-            reader.readAsDataURL(file);
-        }
-
-        function clearPreview() {
-            uploadedImageBase64 = null;
-            uploadedImageType = null;
-            document.getElementById('preview-bar').style.display = 'none';
-            document.getElementById('file-in').value = '';
-        }
-
-        async function handleSend() {
-            const input = document.getElementById('msg-input');
-            const text = input.value.trim();
-            if (!text && !uploadedImageBase64) return;
-
-            let userMessageContent = [];
-            let userDisplayContent = text || '';
-            let imageSrc = '';
-
-            if (uploadedImageBase64) {
-                imageSrc = `data:${uploadedImageType || 'image/jpeg'};base64,${uploadedImageBase64}`;
-                userMessageContent.push({ type: "image_url", image_url: { url: imageSrc } });
-                userDisplayContent += `<br><div class="img-card"><img src="${imageSrc}" class="uploaded-img"></div>`;
-            }
-
-            if (text) {
-                userMessageContent.unshift({ type: "text", text: text });
-            } else if (uploadedImageBase64) {
-                userMessageContent.unshift({ type: "text", text: "Describe this image in detail." });
-            }
-
-            appendMsg(userDisplayContent || 'Analyzing image...', 'user');
-            conversationHistory.push({ role: "user", content: userMessageContent });
-
-            input.value = '';
-
-            const triggerWords = ["draw", "generate", "image of", "make a photo", "painting of", "create an image"];
-            const isImageRequest = triggerWords.some(word => text.toLowerCase().includes(word));
-
-            if (isImageRequest && !uploadedImageBase64) {
-                generateImage(text);
-            } else {
-                chat(text || "Describe the image");
-            }
-
-            clearPreview();
-        }
-
-        async function chat(promptOverride) {
-            const aiBubble = appendMsg("", 'ai');
-            let fullText = "";
-
-            try {
-                // FIXED: Using relative path for Vercel deployment
-                const response = await fetch("/api/chat", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        messages: conversationHistory,
-                        promptOverride
-                    })
-                });
-
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) {
-                        fullText = fullText.trim();
-                        aiBubble.innerHTML = `<div class="message-content">${fullText.replace(/\n/g, '<br>')}</div>`;
-                        addAlignmentToolbar(aiBubble);
-                        conversationHistory.push({ role: "assistant", content: fullText });
-                        break;
-                    }
-                    const chunk = decoder.decode(value);
-                    const lines = chunk.split("\n");
-                    for (const line of lines) {
-                        if (line.startsWith("data: ") && line !== "data: [DONE]") {
-                            try {
-                                const data = JSON.parse(line.substring(6));
-                                const delta = data.choices[0]?.delta?.content || "";
-                                fullText += delta;
-                                await streamText(aiBubble, fullText);
-                            } catch (e) {}
-                        }
-                    }
+            const chunk = decoder.decode(value);
+            const lines = chunk.split("\n");
+            for (const line of lines) {
+                if (line.startsWith("data: ") && line !== "data: [DONE]") {
+                    try {
+                        const data = JSON.parse(line.substring(6));
+                        const delta = data.choices[0]?.delta?.content || "";
+                        fullText += delta;
+                        await streamText(aiBubble, fullText);
+                    } catch (e) {}
                 }
-            } catch (err) {
-                aiBubble.innerText = "Error: Could not get response.";
-                console.error(err);
             }
         }
+    } catch (err) {
+        aiBubble.innerText = "Error: Could not get response.";
+        console.error(err);
+    }
+}
 
-        async function generateImage(prompt) {
-            const aiBubble = appendMsg("🎨 Generating image with Freepik...", 'ai');
-            
-            try {
-                // FIXED: Using relative path for Vercel deployment
-                const response = await fetch("/api/generate-image", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ prompt })
-                });
+async function generateImage(prompt) {
+    const aiBubble = appendMsg("🎨 Generating image with Freepik...", 'ai');
+    
+    try {
+        // POINTING TO NEW BACKEND
+        const response = await fetch(`${BACKEND_URL}/api/generate-image`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt })
+        });
 
-                const result = await response.json();
-                const imageData = result.data[0].base64 || result.data[0].url;
-                const finalSrc = result.data[0].base64 ? `data:image/png;base64,${imageData}` : imageData;
+        const result = await response.json();
+        const imageData = result.data[0].base64 || result.data[0].url;
+        const finalSrc = result.data[0].base64 ? `data:image/png;base64,${imageData}` : imageData;
 
-                aiBubble.innerHTML = `
-                    <div class="img-card">
-                        <img src="${finalSrc}" class="gen-img">
-                        <a href="${finalSrc}" download="bru-ai-art.png" class="dl-btn">💾 Download 2K Image</a>
-                    </div>
-                `;
-                scrollBottom();
+        aiBubble.innerHTML = `
+            <div class="img-card">
+                <img src="${finalSrc}" class="gen-img">
+                <a href="${finalSrc}" download="bru-ai-art.png" class="dl-btn">💾 Download 2K Image</a>
+            </div>
+        `;
+        scrollBottom();
+        conversationHistory.push({ role: "assistant", content: `Generated image: ${prompt}` });
+    } catch (err) {
+        aiBubble.innerText = "Error: Freepik API failed.";
+        console.error(err);
+    }
+}
 
-                conversationHistory.push({ role: "assistant", content: `Here is the generated image: ${prompt}\n![Generated Image](${finalSrc})` });
-            } catch (err) {
-                aiBubble.innerText = "Error: Freepik API failed.";
-                console.error(err);
-            }
-        }
-
-        async function streamText(element, targetText) {
-            const currentLength = element.innerText.length;
-            const newChars = targetText.slice(currentLength);
-            
-            for (const char of newChars) {
-                element.innerText += char;
-                scrollBottom();
-                await new Promise(resolve => setTimeout(resolve, 1000 / STREAM_SPEED));
-            }
-        }
-
-        function addAlignmentToolbar(bubble) {
-            const toolbar = document.createElement('div');
-            toolbar.className = 'align-toolbar';
-            toolbar.innerHTML = `
-                <span class="align-btn active" data-align="left">↶ Left</span>
-                <span class="align-btn" data-align="center">↔ Center</span>
-                <span class="align-btn" data-align="right">↷ Right</span>
-                <span class="align-btn" data-align="justify">≡ Justify</span>
-            `;
-
-            bubble.insertBefore(toolbar, bubble.firstChild);
-
-            toolbar.querySelectorAll('.align-btn').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    const content = bubble.querySelector('.message-content');
-                    if(content) {
-                        content.classList.remove('text-left', 'text-center', 'text-right', 'text-justify');
-                        content.classList.add(`text-${btn.dataset.align}`);
-                        toolbar.querySelectorAll('.align-btn').forEach(b => b.classList.remove('active'));
-                        btn.classList.add('active');
-                    }
-                });
-            });
-        }
-
-        function appendMsg(content, role) {
-            const d = document.createElement('div');
-            d.className = `bubble ${role}`;
-            if (role === 'ai' && typeof content === 'string' && content !== "" && !content.includes('img-card')) {
-                d.innerHTML = `<div class="message-content text-left">${content.replace(/\n/g, '<br>')}</div>`;
-                addAlignmentToolbar(d);
-            } else {
-                d.innerHTML = content;
-            }
-            document.getElementById('chat-display').appendChild(d);
-            scrollBottom();
-            return d;
-        }
-
-        function scrollBottom() {
-            const display = document.getElementById('chat-display');
-            display.scrollTop = display.scrollHeight;
-        }
-
-        document.getElementById('msg-input').onkeypress = (e) => { 
-            if (e.key === "Enter" && !e.shiftKey) { 
-                e.preventDefault(); 
-                handleSend(); 
-            } 
-        };
+// ... [Keep your appendMsg, scrollBottom, and streamText functions here] ...
     </script>
 </body>
 </html>
+
